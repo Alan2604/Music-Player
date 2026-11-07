@@ -3,6 +3,7 @@ package org.fossify.musicplayer.activities
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
@@ -43,7 +44,6 @@ import org.fossify.commons.helpers.MEDIUM_ALPHA
 import org.fossify.musicplayer.R
 import org.fossify.musicplayer.databinding.ActivityTrackBinding
 import org.fossify.musicplayer.extensions.config
-import org.fossify.musicplayer.extensions.getCoverArtHeight
 import org.fossify.musicplayer.extensions.getPlaybackSetting
 import org.fossify.musicplayer.extensions.getTrackCoverArt
 import org.fossify.musicplayer.extensions.getTrackFromUri
@@ -65,7 +65,6 @@ import org.fossify.musicplayer.models.Track
 import org.fossify.musicplayer.playback.CustomCommands
 import org.fossify.musicplayer.playback.PlaybackService
 import java.text.DecimalFormat
-import kotlin.math.min
 import kotlin.time.Duration.Companion.milliseconds
 
 class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
@@ -86,18 +85,21 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     private val binding by viewBinding(ActivityTrackBinding::inflate)
 
+    // Metro look: always white on black, accent comes from the app primary color
+    private val metroText = Color.WHITE
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
-        setupEdgeToEdge(padBottomSystem = listOf(binding.nextTrackHolder))
+        setupEdgeToEdge(padBottomSystem = listOf(binding.activityTrackHolder))
         nextTrackPlaceholder =
-            resources.getColoredDrawableWithColor(R.drawable.ic_headset, getProperTextColor())
+            resources.getColoredDrawableWithColor(R.drawable.ic_headset, metroText)
         setupButtons()
         setupFlingListener()
 
         binding.apply {
             activityTrackToolbar.setNavigationOnClickListener { finish() }
-            nextTrackHolder.background = getProperBackgroundColor().toDrawable()
+            nextTrackHolder.background = Color.BLACK.toDrawable()
             nextTrackHolder.setOnClickListener {
                 startActivity(Intent(applicationContext, QueueActivity::class.java))
             }
@@ -112,7 +114,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
             setupNextTrackInfo(PlaybackService.nextMediaItem)
             activityTrackPlayPause.updatePlayPauseIcon(
                 isPlaying = PlaybackService.isPlaying,
-                color = getProperTextColor()
+                color = metroText
             )
             updatePlayerState()
         }
@@ -121,8 +123,14 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
     override fun onResume() {
         super.onResume()
         updateTextColors(binding.activityTrackHolder)
-        binding.activityTrackTitle.setTextColor(getProperTextColor())
-        binding.activityTrackArtist.setTextColor(getProperTextColor())
+        binding.activityTrackTitle.setTextColor(metroText)
+        binding.activityTrackArtist.setTextColor(metroText)
+        listOf(
+            binding.activityTrackProgressCurrent,
+            binding.activityTrackProgressMax,
+            binding.activityTrackSpeed,
+            binding.nextTrackLabel
+        ).forEach { it.setTextColor(metroText) }
         updatePlayerState()
         updateTrackInfo()
     }
@@ -198,7 +206,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
         setupSeekbar()
 
         arrayOf(activityTrackPrevious, activityTrackPlayPause, activityTrackNext).forEach {
-            it.applyColorFilter(getProperTextColor())
+            it.applyColorFilter(metroText)
         }
     }
 
@@ -247,31 +255,24 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     private fun setupTopArt(track: Track) {
         getTrackCoverArt(track) { coverArt ->
-            var wantedHeight = resources.getCoverArtHeight()
-            wantedHeight = min(wantedHeight, realScreenSize.y / 2)
-            val wantedWidth = realScreenSize.x
+            // Metro look: flat square cover, about 80% of the screen width
+            val side = (realScreenSize.x * 0.8f).toInt()
 
             // change cover image manually only once loaded successfully to avoid blinking at fails and placeholders
             loadGlideResource(
                 model = coverArt,
-                // show full "audiobook" covers
                 options = RequestOptions().fitCenter(),
-                size = Size(wantedWidth, wantedHeight),
+                size = Size(side, side),
                 onLoadFailed = {
                     val drawable = resources.getDrawable(R.drawable.ic_headset)
-                    val placeholder = getResizedDrawable(drawable, wantedHeight)
-                    placeholder.applyColorFilter(getProperTextColor())
+                    val placeholder = getResizedDrawable(drawable, side)
+                    placeholder.applyColorFilter(metroText)
 
                     runOnUiThread {
                         binding.activityTrackImage.setImageDrawable(placeholder)
                     }
                 },
                 onResourceReady = {
-                    val coverHeight = it.intrinsicHeight
-                    if (coverHeight > 0 && binding.activityTrackImage.height != coverHeight) {
-                        binding.activityTrackImage.layoutParams.height = coverHeight
-                    }
-
                     runOnUiThread {
                         binding.activityTrackImage.setImageDrawable(it)
                     }
@@ -320,7 +321,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     private fun setupShuffleButton(isShuffleEnabled: Boolean = config.isShuffleEnabled) {
         binding.activityTrackToggleShuffle.apply {
-            applyColorFilter(if (isShuffleEnabled) getProperPrimaryColor() else getProperTextColor())
+            applyColorFilter(if (isShuffleEnabled) getProperPrimaryColor() else metroText)
             alpha = if (isShuffleEnabled) 1f else MEDIUM_ALPHA
             contentDescription =
                 getString(if (isShuffleEnabled) R.string.disable_shuffle else R.string.enable_shuffle)
@@ -361,12 +362,12 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
             val isRepeatOff = playbackSetting == PlaybackSetting.REPEAT_OFF
 
             alpha = if (isRepeatOff) MEDIUM_ALPHA else 1f
-            applyColorFilter(if (isRepeatOff) getProperTextColor() else getProperPrimaryColor())
+            applyColorFilter(if (isRepeatOff) metroText else getProperPrimaryColor())
         }
     }
 
     private fun setupSeekbar() {
-        binding.activityTrackSpeedIcon.applyColorFilter(getProperTextColor())
+        binding.activityTrackSpeedIcon.applyColorFilter(metroText)
         updatePlaybackSpeed(config.playbackSpeed)
 
         binding.activityTrackProgressbar.setOnSeekBarChangeListener(
@@ -479,7 +480,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
     }
 
     private fun updatePlayPause(isPlaying: Boolean) {
-        binding.activityTrackPlayPause.updatePlayPauseIcon(isPlaying, getProperTextColor())
+        binding.activityTrackPlayPause.updatePlayPauseIcon(isPlaying, metroText)
     }
 
     private fun seekToNext() {

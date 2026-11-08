@@ -1,6 +1,15 @@
 <resources>
     <string name="package_name">org.fossify.musicplayer</string>
     <string name="app_name">Metro Player</string>
-    <string name="metro_title">music</string>
-    <string name="metro_now_playing">NOW PLAYING</string>
+    <string name="metro_title">MÚSICA</string>
+    <string name="metro_now_playing">Reproduciendo Ahora</string>
+    <string name="metro_edit">Editar canción</string>
+    <string name="metro_edit_title">Título</string>
+    <string name="metro_edit_description">Descripción (artista)</string>
+    <string name="metro_edit_cover">Cambiar carátula</string>
+    <string name="metro_edit_empty">El título no puede estar vacío</string>
+    <string name="metro_edit_saved">Cambios guardados</string>
+    <string name="metro_edit_unsupported">Este formato de audio no permite editar título ni descripción</string>
+    <string name="metro_search">Buscar canciones</string>
+    <string name="metro_search_hint">Escribe título, artista o álbum</string>
 </resources>

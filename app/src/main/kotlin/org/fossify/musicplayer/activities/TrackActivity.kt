@@ -3,8 +3,11 @@ package org.fossify.musicplayer.activities
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,7 +15,21 @@ import android.provider.MediaStore
 import android.util.Size
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.SeekBar
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.core.graphics.ColorUtils
+import androidx.core.widget.doAfterTextChanged
+import com.bumptech.glide.signature.ObjectKey
 import androidx.core.graphics.drawable.toDrawable
 import androidx.core.graphics.scale
 import androidx.core.os.postDelayed
@@ -30,19 +47,25 @@ import org.fossify.commons.extensions.applyColorFilter
 import org.fossify.commons.extensions.beGone
 import org.fossify.commons.extensions.beVisible
 import org.fossify.commons.extensions.copyToClipboard
+import org.fossify.commons.extensions.getAlertDialogBuilder
 import org.fossify.commons.extensions.getColoredDrawableWithColor
 import org.fossify.commons.extensions.getFormattedDuration
 import org.fossify.commons.extensions.getProperBackgroundColor
 import org.fossify.commons.extensions.getProperPrimaryColor
 import org.fossify.commons.extensions.getProperTextColor
 import org.fossify.commons.extensions.realScreenSize
+import org.fossify.commons.extensions.setupDialogStuff
+import org.fossify.commons.extensions.showKeyboard
 import org.fossify.commons.extensions.toast
 import org.fossify.commons.extensions.updateTextColors
 import org.fossify.commons.extensions.value
 import org.fossify.commons.extensions.viewBinding
 import org.fossify.commons.helpers.MEDIUM_ALPHA
+import org.fossify.commons.helpers.ensureBackgroundThread
 import org.fossify.musicplayer.R
 import org.fossify.musicplayer.databinding.ActivityTrackBinding
+import org.fossify.musicplayer.databinding.DialogMetroEditBinding
+import org.fossify.musicplayer.extensions.audioHelper
 import org.fossify.musicplayer.extensions.config
 import org.fossify.musicplayer.extensions.getPlaybackSetting
 import org.fossify.musicplayer.extensions.getTrackCoverArt
@@ -58,12 +81,14 @@ import org.fossify.musicplayer.extensions.toMediaItem
 import org.fossify.musicplayer.extensions.toTrack
 import org.fossify.musicplayer.extensions.updatePlayPauseIcon
 import org.fossify.musicplayer.fragments.PlaybackSpeedFragment
+import org.fossify.musicplayer.helpers.TagHelper
 import org.fossify.musicplayer.helpers.PlaybackSetting
 import org.fossify.musicplayer.helpers.SEEK_INTERVAL_S
 import org.fossify.musicplayer.interfaces.PlaybackSpeedListener
 import org.fossify.musicplayer.models.Track
 import org.fossify.musicplayer.playback.CustomCommands
 import org.fossify.musicplayer.playback.PlaybackService
+import java.io.File
 import java.text.DecimalFormat
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -96,6 +121,8 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
             resources.getColoredDrawableWithColor(R.drawable.ic_headset, metroText)
         setupButtons()
         setupFlingListener()
+        setupMetroToolbar()
+        playMetroEntrance()
 
         binding.apply {
             activityTrackToolbar.setNavigationOnClickListener { finish() }
@@ -123,6 +150,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
     override fun onResume() {
         super.onResume()
         updateTextColors(binding.activityTrackHolder)
+        binding.activityTrackToolbar.overflowIcon?.applyColorFilter(metroText)
         binding.activityTrackTitle.setTextColor(metroText)
         binding.activityTrackArtist.setTextColor(metroText)
         listOf(
@@ -159,6 +187,10 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     private fun setupTrackInfo(item: MediaItem?) {
         val track = item?.toTrack() ?: return
+        editedInfo[track.mediaStoreId]?.let {
+            track.title = it.first
+            track.artist = it.second
+        }
 
         setupTopArt(track)
         binding.apply {
@@ -261,7 +293,8 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
             // change cover image manually only once loaded successfully to avoid blinking at fails and placeholders
             loadGlideResource(
                 model = coverArt,
-                options = RequestOptions().fitCenter(),
+                options = RequestOptions().fitCenter()
+                    .signature(ObjectKey((coverArt as? File)?.lastModified() ?: 0L)),
                 size = Size(side, side),
                 onLoadFailed = {
                     val drawable = resources.getDrawable(R.drawable.ic_headset)
@@ -278,6 +311,280 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
                     }
                 }
             )
+        }
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Metro extras: entrance animation, toolbar buttons (search + three dots), editor, search
+    // ---------------------------------------------------------------------------------
+
+    private val editedInfo = mutableMapOf<Long, Pair<String, String>>()
+    private var pendingCover: Bitmap? = null
+    private var coverPreview: ImageView? = null
+    private val tagHelper by lazy { TagHelper(this) }
+
+    private val pickCover = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            onCoverPicked(uri)
+        }
+    }
+
+    private fun setupMetroToolbar() {
+        val toolbar = binding.activityTrackToolbar
+        toolbar.inflateMenu(R.menu.menu_track)
+        toolbar.overflowIcon?.applyColorFilter(metroText)
+        toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.metro_search -> showSearchDialog()
+                R.id.metro_edit_track -> showEditDialog()
+            }
+            true
+        }
+    }
+
+    // Windows Phone style: the big title and the section header slide in from the right,
+    // one after the other, decelerating into place.
+    private fun playMetroEntrance() {
+        val distance = resources.displayMetrics.density * 96f
+        listOf(binding.metroTitle to 0L, binding.metroHeader to 90L).forEach { (view, delay) ->
+            view.alpha = 0f
+            view.translationX = distance
+            view.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .setStartDelay(delay)
+                .setDuration(420L)
+                .setInterpolator(DecelerateInterpolator(2f))
+                .start()
+        }
+    }
+
+    private fun showSearchDialog() {
+        ensureBackgroundThread {
+            val allTracks = ArrayList(audioHelper.getAllTracks())
+            runOnUiThread {
+                if (isFinishing || isDestroyed) {
+                    return@runOnUiThread
+                }
+
+                val textColor = getProperTextColor()
+                val density = resources.displayMetrics.density
+                val input = EditText(this@TrackActivity).apply {
+                    hint = getString(R.string.metro_search_hint)
+                    setTextColor(textColor)
+                    setHintTextColor(ColorUtils.setAlphaComponent(textColor, 128))
+                    setSingleLine()
+                }
+
+                var results: List<Track> = emptyList()
+                val adapter = object : ArrayAdapter<String>(
+                    this@TrackActivity,
+                    android.R.layout.simple_list_item_1,
+                    ArrayList<String>()
+                ) {
+                    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                        val view = super.getView(position, convertView, parent)
+                        (view as? TextView)?.setTextColor(textColor)
+                        return view
+                    }
+                }
+                val list = ListView(this@TrackActivity)
+                list.adapter = adapter
+
+                input.doAfterTextChanged { text ->
+                    val query = text?.toString().orEmpty().trim().lowercase()
+                    results = if (query.isEmpty()) {
+                        emptyList()
+                    } else {
+                        allTracks.filter {
+                            it.title.lowercase().contains(query) ||
+                                it.artist.lowercase().contains(query) ||
+                                it.album.lowercase().contains(query)
+                        }.take(100)
+                    }
+                    adapter.clear()
+                    adapter.addAll(results.map { "${it.title} • ${it.artist}" })
+                }
+
+                val container = LinearLayout(this@TrackActivity)
+                container.orientation = LinearLayout.VERTICAL
+                val pad = (density * 20).toInt()
+                container.setPadding(pad, pad / 2, pad, 0)
+                container.addView(
+                    input,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+                container.addView(
+                    list,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        (density * 320).toInt()
+                    )
+                )
+
+                var dialog: AlertDialog? = null
+                list.setOnItemClickListener { _, _, position, _ ->
+                    val picked = results.getOrNull(position) ?: return@setOnItemClickListener
+                    val index = allTracks.indexOfFirst { it.mediaStoreId == picked.mediaStoreId }
+                    dialog?.dismiss()
+                    if (index >= 0) {
+                        prepareAndPlay(allTracks, startIndex = index, startActivity = false)
+                    }
+                }
+
+                getAlertDialogBuilder()
+                    .setNegativeButton(org.fossify.commons.R.string.cancel, null)
+                    .apply {
+                        setupDialogStuff(container, this, R.string.metro_search) { alertDialog ->
+                            dialog = alertDialog
+                            alertDialog.showKeyboard(input)
+                        }
+                    }
+            }
+        }
+    }
+
+    private fun showEditDialog() {
+        val track = PlaybackService.currentMediaItem?.toTrack() ?: return
+        pendingCover = null
+
+        val dialogBinding = DialogMetroEditBinding.inflate(layoutInflater)
+        coverPreview = dialogBinding.metroEditCover
+        dialogBinding.metroEditCover.setImageDrawable(binding.activityTrackImage.drawable)
+        dialogBinding.metroEditCoverButton.setTextColor(getProperPrimaryColor())
+        dialogBinding.metroEditCoverButton.setOnClickListener { pickCover.launch("image/*") }
+        dialogBinding.metroEditTitleInput.setText(editedInfo[track.mediaStoreId]?.first ?: track.title)
+        dialogBinding.metroEditDescriptionInput.setText(editedInfo[track.mediaStoreId]?.second ?: track.artist)
+
+        getAlertDialogBuilder()
+            .setPositiveButton(org.fossify.commons.R.string.ok, null)
+            .setNegativeButton(org.fossify.commons.R.string.cancel, null)
+            .apply {
+                setupDialogStuff(dialogBinding.root, this, R.string.metro_edit) { alertDialog ->
+                    alertDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        saveEdits(
+                            track = track,
+                            newTitle = dialogBinding.metroEditTitleInput.value.trim(),
+                            newArtist = dialogBinding.metroEditDescriptionInput.value.trim(),
+                            dialog = alertDialog
+                        )
+                    }
+                }
+            }
+    }
+
+    private fun saveEdits(track: Track, newTitle: String, newArtist: String, dialog: AlertDialog) {
+        if (newTitle.isEmpty()) {
+            toast(R.string.metro_edit_empty)
+            return
+        }
+
+        val shownTitle = editedInfo[track.mediaStoreId]?.first ?: track.title
+        val shownArtist = editedInfo[track.mediaStoreId]?.second ?: track.artist
+        val textChanged = newTitle != shownTitle || newArtist != shownArtist
+        val newCover = pendingCover
+        if (!textChanged && newCover == null) {
+            dialog.dismiss()
+            return
+        }
+
+        if (textChanged && !tagHelper.isEditTagSupported(track)) {
+            toast(R.string.metro_edit_unsupported)
+            return
+        }
+
+        val onDone = {
+            runOnUiThread {
+                if (textChanged) {
+                    editedInfo[track.mediaStoreId] = newTitle to newArtist
+                    binding.activityTrackTitle.text = newTitle
+                    binding.activityTrackArtist.text = newArtist
+                }
+                if (newCover != null) {
+                    setupTopArt(track)
+                }
+                pendingCover = null
+                toast(R.string.metro_edit_saved)
+                dialog.dismiss()
+            }
+        }
+
+        ensureBackgroundThread {
+            try {
+                if (newCover != null) {
+                    saveCustomCover(track, newCover)
+                }
+
+                if (textChanged) {
+                    val edited = track.copy(title = newTitle, artist = newArtist)
+                    handleRecoverableSecurityException { granted ->
+                        if (granted) {
+                            try {
+                                tagHelper.writeTag(edited, newArtist, newTitle, edited.album)
+                                audioHelper.updateTrackInfo(edited.path, newArtist, newTitle, edited.path)
+                                onDone()
+                            } catch (e: Exception) {
+                                runOnUiThread { toast(org.fossify.commons.R.string.unknown_error_occurred) }
+                            }
+                        }
+                    }
+                } else {
+                    onDone()
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast(org.fossify.commons.R.string.unknown_error_occurred) }
+            }
+        }
+    }
+
+    // Custom covers live in the app's private storage and take priority over the file's own art
+    // (see getTrackCoverArt). The audio file itself is not modified.
+    private fun saveCustomCover(track: Track, bitmap: Bitmap) {
+        val dir = File(filesDir, "custom_covers")
+        dir.mkdirs()
+        File(dir, "${track.mediaStoreId}.jpg").outputStream().use {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it)
+        }
+    }
+
+    private fun onCoverPicked(uri: Uri) {
+        ensureBackgroundThread {
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2048) {
+                    sample *= 2
+                }
+
+                val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                val decoded = contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, options)
+                } ?: throw IllegalStateException("Could not decode image")
+
+                val longest = maxOf(decoded.width, decoded.height)
+                val bitmap = if (longest > 1024) {
+                    val ratio = 1024f / longest
+                    Bitmap.createScaledBitmap(
+                        decoded,
+                        (decoded.width * ratio).toInt(),
+                        (decoded.height * ratio).toInt(),
+                        true
+                    )
+                } else {
+                    decoded
+                }
+
+                runOnUiThread {
+                    pendingCover = bitmap
+                    coverPreview?.setImageBitmap(bitmap)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast(org.fossify.commons.R.string.unknown_error_occurred) }
+            }
         }
     }
 

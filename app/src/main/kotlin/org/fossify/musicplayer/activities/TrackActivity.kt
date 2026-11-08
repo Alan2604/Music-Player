@@ -19,7 +19,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.ArrayAdapter
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -27,6 +26,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.widget.AppCompatEditText
 import androidx.core.graphics.ColorUtils
 import androidx.core.widget.doAfterTextChanged
 import com.bumptech.glide.signature.ObjectKey
@@ -369,7 +369,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
                 val textColor = getProperTextColor()
                 val density = resources.displayMetrics.density
-                val input = EditText(this@TrackActivity).apply {
+                val input = AppCompatEditText(this@TrackActivity).apply {
                     hint = getString(R.string.metro_search_hint)
                     setTextColor(textColor)
                     setHintTextColor(ColorUtils.setAlphaComponent(textColor, 128))

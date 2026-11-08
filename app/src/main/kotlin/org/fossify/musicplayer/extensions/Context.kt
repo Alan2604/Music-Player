@@ -183,8 +183,13 @@ fun Context.getTrackCoverArt(track: Track?, callback: (coverArt: Any?) -> Unit) 
             return@ensureBackgroundThread
         }
 
-        val coverArt = track.coverArt.ifEmpty {
-            loadTrackCoverArt(track)
+        val customCover = File(filesDir, "custom_covers/${track.mediaStoreId}.jpg")
+        val coverArt: Any? = if (customCover.exists()) {
+            customCover
+        } else {
+            track.coverArt.ifEmpty {
+                loadTrackCoverArt(track)
+            }
         }
 
         Handler(Looper.getMainLooper()).post {

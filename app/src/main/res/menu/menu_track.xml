@@ -2,6 +2,11 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
+        android:id="@+id/metro_lyrics"
+        android:icon="@drawable/ic_metro_lyrics"
+        android:title="@string/metro_lyrics"
+        app:showAsAction="always" />
+    <item
         android:id="@+id/metro_search"
         android:icon="@drawable/ic_metro_search"
         android:title="@string/metro_search"

@@ -34,6 +34,7 @@ import androidx.core.graphics.drawable.toDrawable
 import androidx.core.graphics.scale
 import androidx.core.os.postDelayed
 import androidx.core.view.GestureDetectorCompat
+import androidx.core.view.WindowCompat
 import androidx.media3.common.MediaItem
 import com.bumptech.glide.load.resource.bitmap.CenterCrop
 import com.bumptech.glide.load.resource.bitmap.RoundedCorners
@@ -65,6 +66,8 @@ import org.fossify.commons.helpers.ensureBackgroundThread
 import org.fossify.musicplayer.R
 import org.fossify.musicplayer.databinding.ActivityTrackBinding
 import org.fossify.musicplayer.databinding.DialogMetroEditBinding
+import org.fossify.musicplayer.dialogs.ArtworkSearchDialog
+import org.fossify.musicplayer.dialogs.LyricsPanel
 import org.fossify.musicplayer.extensions.audioHelper
 import org.fossify.musicplayer.extensions.config
 import org.fossify.musicplayer.extensions.getPlaybackSetting
@@ -110,12 +113,16 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     private val binding by viewBinding(ActivityTrackBinding::inflate)
 
-    // Metro look: always white on black, accent comes from the app primary color
-    private val metroText = Color.WHITE
+    // Metro look: colors follow the app theme. With the "Auto light / dark" theme this is
+    // AMOLED black + white text in dark mode and white + black text in light mode.
+    private var metroText = Color.WHITE
+    private var metroBg = Color.BLACK
+    private var lyricsPanel: LyricsPanel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
+        refreshMetroColors()
         setupEdgeToEdge(padBottomSystem = listOf(binding.activityTrackHolder))
         nextTrackPlaceholder =
             resources.getColoredDrawableWithColor(R.drawable.ic_headset, metroText)
@@ -126,7 +133,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
         binding.apply {
             activityTrackToolbar.setNavigationOnClickListener { finish() }
-            nextTrackHolder.background = Color.BLACK.toDrawable()
+            nextTrackHolder.background = metroBg.toDrawable()
             nextTrackHolder.setOnClickListener {
                 startActivity(Intent(applicationContext, QueueActivity::class.java))
             }
@@ -150,6 +157,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
     override fun onResume() {
         super.onResume()
         updateTextColors(binding.activityTrackHolder)
+        refreshMetroColors()
         binding.activityTrackToolbar.overflowIcon?.applyColorFilter(metroText)
         binding.activityTrackTitle.setTextColor(metroText)
         binding.activityTrackArtist.setTextColor(metroText)
@@ -175,6 +183,8 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        lyricsPanel?.dismiss()
+        lyricsPanel = null
         cancelProgressUpdate()
         if (isThirdPartyIntent && !isChangingConfigurations) {
             withPlayer {
@@ -333,13 +343,86 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
         val toolbar = binding.activityTrackToolbar
         toolbar.inflateMenu(R.menu.menu_track)
         toolbar.overflowIcon?.applyColorFilter(metroText)
+        tintToolbarIcons()
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
+                R.id.metro_lyrics -> showLyrics()
                 R.id.metro_search -> showSearchDialog()
                 R.id.metro_edit_track -> showEditDialog()
             }
             true
         }
+    }
+
+    private fun refreshMetroColors() {
+        metroText = getProperTextColor()
+        metroBg = getProperBackgroundColor()
+
+        binding.root.setBackgroundColor(metroBg)
+        (binding.root as? ViewGroup)?.getChildAt(0)?.setBackgroundColor(metroBg)
+        binding.nextTrackHolder.background = metroBg.toDrawable()
+        binding.metroTitle.setTextColor(metroText)
+        binding.metroHeader.setTextColor(metroText)
+        binding.activityTrackToolbar.navigationIcon?.applyColorFilter(metroText)
+        tintToolbarIcons()
+
+        val lightBars = ColorUtils.calculateLuminance(metroBg) > 0.5
+        WindowCompat.getInsetsController(window, binding.root).apply {
+            isAppearanceLightStatusBars = lightBars
+            isAppearanceLightNavigationBars = lightBars
+        }
+    }
+
+    private fun tintToolbarIcons() {
+        val menu = binding.activityTrackToolbar.menu
+        for (i in 0 until menu.size()) {
+            menu.getItem(i).icon?.mutate()?.applyColorFilter(metroText)
+        }
+    }
+
+    // The title/artist the user sees (including edits made in the editor)
+    private fun currentTrackWithEdits(): Track? {
+        val track = PlaybackService.currentMediaItem?.toTrack() ?: return null
+        editedInfo[track.mediaStoreId]?.let {
+            track.title = it.first
+            track.artist = it.second
+        }
+        return track
+    }
+
+    private fun showLyrics() {
+        val track = currentTrackWithEdits() ?: return
+        val panel = lyricsPanel ?: LyricsPanel(
+            activity = this,
+            textColor = metroText,
+            bgColor = metroBg,
+            accentColor = getProperPrimaryColor(),
+            onSeek = { positionMs -> withPlayer { seekTo(positionMs) } }
+        ).also { lyricsPanel = it }
+
+        withPlayer {
+            panel.show(track, currentPosition)
+        }
+    }
+
+    private fun showArtworkSearch(track: Track) {
+        val title = editedInfo[track.mediaStoreId]?.first ?: track.title
+        val artist = (editedInfo[track.mediaStoreId]?.second ?: track.artist)
+            .takeUnless { it.isBlank() || it == MediaStore.UNKNOWN_STRING }.orEmpty()
+        val album = track.album.takeUnless { it.isBlank() || it == MediaStore.UNKNOWN_STRING }.orEmpty()
+
+        ArtworkSearchDialog(
+            activity = this,
+            songQuery = "$artist $title".trim(),
+            albumQuery = "$artist $album".trim(),
+            textColor = metroText,
+            bgColor = metroBg,
+            accentColor = getProperPrimaryColor(),
+            onPicked = { bitmap ->
+                pendingCover = bitmap
+                coverPreview?.setImageBitmap(bitmap)
+            }
+        ).show()
     }
 
     // Windows Phone style: the big title and the section header slide in from the right,
@@ -456,6 +539,8 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
         dialogBinding.metroEditCover.setImageDrawable(binding.activityTrackImage.drawable)
         dialogBinding.metroEditCoverButton.setTextColor(getProperPrimaryColor())
         dialogBinding.metroEditCoverButton.setOnClickListener { pickCover.launch("image/*") }
+        dialogBinding.metroEditCoverSearchButton.setTextColor(getProperPrimaryColor())
+        dialogBinding.metroEditCoverSearchButton.setOnClickListener { showArtworkSearch(track) }
         dialogBinding.metroEditTitleInput.setText(editedInfo[track.mediaStoreId]?.first ?: track.title)
         dialogBinding.metroEditDescriptionInput.setText(editedInfo[track.mediaStoreId]?.second ?: track.artist)
 
@@ -740,6 +825,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
         } else {
             binding.activityTrackProgressbar.progress = 0
             updateTrackInfo()
+            currentTrackWithEdits()?.let { lyricsPanel?.onTrackChanged(it) }
         }
     }
 
@@ -782,6 +868,7 @@ class TrackActivity : SimpleControllerActivity(), PlaybackSpeedListener {
     }
 
     private fun updateProgress(currentPosition: Long) {
+        lyricsPanel?.onPosition(currentPosition)
         binding.activityTrackProgressbar.progress =
             currentPosition.milliseconds.inWholeSeconds.toInt()
     }

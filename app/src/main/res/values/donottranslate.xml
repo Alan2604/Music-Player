@@ -12,4 +12,16 @@
     <string name="metro_edit_unsupported">Este formato de audio no permite editar título ni descripción</string>
     <string name="metro_search">Buscar canciones</string>
     <string name="metro_search_hint">Escribe título, artista o álbum</string>
+    <string name="metro_lyrics">Letra</string>
+    <string name="metro_lyrics_loading">Buscando la letra…</string>
+    <string name="metro_lyrics_none">No se encontró la letra.\n\nPara buscarla en línea necesitas conexión a internet.</string>
+    <string name="metro_edit_cover_search">Buscar carátula en línea</string>
+    <string name="metro_artwork_title">carátulas</string>
+    <string name="metro_artwork_hint">Artista y canción o álbum</string>
+    <string name="metro_artwork_search">Buscar</string>
+    <string name="metro_artwork_searching">Buscando…</string>
+    <string name="metro_artwork_tap">Toca una carátula para usarla (alta resolución)</string>
+    <string name="metro_artwork_none">Sin resultados. Revisa el texto o tu conexión a internet.</string>
+    <string name="metro_artwork_downloading">Descargando en alta resolución…</string>
+    <string name="metro_artwork_failed">No se pudo descargar la carátula</string>
 </resources>
